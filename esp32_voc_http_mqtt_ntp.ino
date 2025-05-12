@@ -4,6 +4,7 @@
 // 1.1.0 ota update feature
 // 1.2.0 add on board led color info, solder first!!, add wifi reconnect and check mqtt publish error
 // 2.0.0a copy of the esp32_temp to test bme688
+// 2.1.0 using bosch library
 
 #define PROD 0 //  REMEMBER to change to 1 for prod deploy
 
@@ -20,7 +21,7 @@
 #include "esp32-hal-cpu.h"
 #include "time.h"
 
-const char VERSION[] = "v2.0.0a";
+const char VERSION[] = "v2.1.0";
 
 Adafruit_BME680 bme;
 #define I2C_SDA 21
@@ -58,16 +59,18 @@ String header;
   float bmeTemp = 22.0;
   float bmeHum = 50;
   float bmePres = 1000;
+  float bmeGasRes = 0;
 #else
   float bmeTemp = 1;
   float bmeHum = 30;
   float bmePres = 900;
+  float bmeGasRes = 0;
 #endif
 float deltaBuf5 = 0.0;
 float deltaBuf2 = 0.0;
 float deltaWW = 0.0;
 
-float rawBmeTemp, rawBmeHum, rawBmePres;
+float rawBmeTemp, rawBmeHum, rawBmePres, rawBmeGasRes;
 
 // Current time
 unsigned long currentTime = millis();
@@ -99,9 +102,9 @@ const unsigned long updateDelay = 5000; // 10 seconds in milliseconds
 const char* updatePage = R"rawliteral(
 <!DOCTYPE html>
 <html>
-<head><title>ESP32  voc  OTA Update</title></head>
+<head><title>ESP32  BME688  OTA Update</title></head>
 <body>
-  <h1>ESP32 OTA Update</h1>
+  <h1>ESP32 BME688 OTA Update</h1>
   <form method="POST" action="/update" enctype="multipart/form-data">
     <input type="file" name="firmware">
     <input type="submit" value="Upload Firmware">
@@ -161,7 +164,8 @@ void ReadBME(void * parameter) {
       rawBmeTemp = bme.temperature;
       rawBmeHum = bme.humidity;
       rawBmePres = bme.pressure / 100.0;
-
+      rawBmeGasRes = bme.gas_resistance / 1000.0;
+      cntBme++;
       // Ignore bme.gas_resistance if not needed
     } else {
       Serial.println("BME688 read failed");
@@ -172,6 +176,7 @@ void ReadBME(void * parameter) {
     bmeTemp = rawBmeTemp;
     bmeHum = rawBmeHum;
     bmePres = rawBmePres;
+    bmeGasRes = rawBmeGasRes;
     
 #if PROD == 0
     bmeTemp++;
@@ -304,6 +309,7 @@ void sendMQTT() {
   message["bmeTemp"] = bmeTemp;
   message["bmeHum"] = bmeHum;
   message["bmePres"] = bmePres;
+  message["bemGasRes"] = bmeGasRes;
   char messageBuffer[512];
   serializeJson(message, messageBuffer);
 
@@ -349,20 +355,21 @@ void handleRoot() {
   String html = "<!DOCTYPE html><html>";
   html += "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
   html += "<link rel=\"icon\" href=\"data:,\">";
-  html += "<title>ESP32 voc</title></head><body>";
+  html += "<title>ESP32 BME688</title></head><body>";
   html += "<style>table { border-collapse: collapse; width: 30%; text-align: center; } th, td { border: 1px solid black; padding: 3px; }  </style>";
 
 #if PROD == 1  
-  html += "<h1>Prod VOC</h1>";
+  html += "<h1>Prod BME688</h1>";
 #else
-  html += "<h1>Test VOC</h1>";
+  html += "<h1>Test BME688</h1>";
 #endif  
   html += String("<p>time: ") + timeString + String(", IP: ") + ip.toString() + String(", RSSI: ") + WiFi.RSSI() + "</p>";
   html += String("<p>cpu Frequency: ") + getCpuFrequencyMhz() + String(" MHz, Core: ") + xPortGetCoreID() +
           String(", Internal Temp: ") + tempInt + String(" C</p>");
   html += String("<p>uptime: ") + uptime + String(" seconds <br>  boot at: " + bootTimeStr + "</p>");
   html += String("<p><ul><li>bmeTem: ") + String(bmeTemp) + " C</li><li>bmeHum: " + String(bmeHum) + " %</li><li>bmePres: " + String(bmePres) + " hPa</li>";
-  html += String("<li>bad val counts: bme: ") + String(cntBadBme) + "</li></ul></p>";
+  html += String("<li>bmeGasRes: ") + String(bmeGasRes) + " kOhm</li>";
+  html += String("<li>cntBme: ") + String(cntBme) + "</li><li>bad val counts: bme: " + String(cntBadBme) + "</li></ul></p>";
   //html += "<p><table><colgroup><col style=\"width: 12%;\"><col style=\"width: 20%;\"><col style=\"width: 20%;\"><col style=\"width: 20%;\"></colgroup>";
   //html += "<tr><th>desc</th><th>temp C</th><th>delta %</th><th>raw C</th><th>bad vals</th><th>consect bad</th></tr>";
   //html += String("<tr><td>buf5</td><td>") + tempBuf5  + String("</td><td>") + FloatRound(deltaBuf5*100, 1)  + String("</td><td>") + rawBuf5 + String("</td><td>") + cntBadBuf5 + String("</td><td>") + cntConsBadBuf5 + String("</td></tr>");
@@ -381,10 +388,10 @@ void handleRoot() {
 
 void handleInfo() {
   String html = "<!DOCTYPE html><html>";
-  html += "<head><title>ESP32 voc info</title></head><body>";
+  html += "<head><title>ESP32 BME688 info</title></head><body>";
   html += "<h1>hw info</h1> <ul> <li>esp32s3wromm dev board</li> <li>bme688</li> </ul>";
   html += "<h1>sw info</h1> <ul> <li>arduino ide</li> <li>espressif 3.3.1alpha</li> </ul>";
-  html += "<p> to build update, in arduino, Sketch, Export Compiled Binary, upload the esp32_temp_http_mqtt_ntp.ino.bin file";
+  html += "<p> to build update, in arduino, Sketch, Export Compiled Binary, upload the esp32_voc_http_mqtt_ntp.ino.bin file";
   html += String("<p>") + VERSION + "</p>";
   html += "<p><a href=\"/\">Back to Home</a></p>";
   html += "</body></html>";
@@ -498,7 +505,9 @@ void setup() {
     bme.setTemperatureOversampling(BME680_OS_8X);
     bme.setHumidityOversampling(BME680_OS_2X);
     bme.setPressureOversampling(BME680_OS_4X);
-    bme.setGasHeater(0, 0);  // Disable gas readings for now
+    //bme.setGasHeater(0, 0);  // Disable gas readings for now
+    bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
+    bme.setGasHeater(300, 100); // Temp in °C, duration in ms
   }
 
   // Connect to Wi-Fi network with SSID and password
